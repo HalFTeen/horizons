@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+
+# Local config & data
+config/secrets.json
+config/.env
+config/followees.json
+config/*.local
+
+# Runtime artifacts
+logs/
+data/
+
+# Build artifacts
+*.egg-info/

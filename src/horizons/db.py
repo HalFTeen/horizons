@@ -72,6 +72,18 @@ def upsert_sources(followee_id: str, sources: Iterable[dict]) -> None:
         conn.commit()
 
 
+def get_source_id(followee_id: str, source_url: str) -> int:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id FROM sources WHERE followee_id = ? AND url = ?",
+            (followee_id, source_url),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise LookupError(f"Source not found for followee={followee_id} url={source_url}")
+    return int(row[0])
+
+
 def insert_item(record: dict) -> Optional[int]:
     with get_connection() as conn:
         try:
