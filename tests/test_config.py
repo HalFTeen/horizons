@@ -183,8 +183,9 @@ class TestConfigLoading:
     def test_load_followees_from_json(self, temp_config_dir: Path) -> None:
         """Config should load followees from JSON file."""
         from unittest.mock import patch
+        import importlib
 
-        # Patch all module-level paths
+        # Patch all module-level paths with absolute Path objects
         with patch("horizons.config.BASE_DIR", temp_config_dir), \
              patch("horizons.config.CONFIG_DIR", temp_config_dir / "config"), \
              patch("horizons.config.DATA_DIR", temp_config_dir / "data"), \
@@ -192,6 +193,10 @@ class TestConfigLoading:
              patch("horizons.config.SECRETS_FILE", temp_config_dir / "config" / "secrets.json"), \
              patch("horizons.config.FOLLOWEES_FILE", temp_config_dir / "config" / "followees.json"):
 
+            # Force module reload to get fresh module state
+            importlib.import_module('horizons.config')
+            
+            # Need to import Config from freshly reloaded module
             from horizons.config import Config
 
             cfg = Config()
@@ -203,53 +208,122 @@ class TestConfigLoading:
         """Config should raise RuntimeError when secrets.json is missing values."""
         from horizons.config import Config, ensure_dirs
 
-        # Create followees.json only (no secrets.json)
+        # Create followees.json
         followees = {"test": {"display_name": "Test", "sources": []}}
         (temp_config_dir / "followees.json").write_text(
             json.dumps(followees), encoding="utf-8"
         )
 
-        # Remove secrets.json to test missing file case
-        secrets_file = temp_config_dir / "secrets.json"
-        if secrets_file.exists():
-            secrets_file.unlink()
-
-        ensure_dirs()
-
-        with pytest.raises(RuntimeError, match="secrets.json missing value for"):
-            Config()
-
-    def test_creates_default_followees_if_missing(self, temp_config_dir: Path) -> None:
-        """Config should create default followees.json if it doesn't exist."""
-        from horizons.config import Config, FOLLOWEES_FILE, ensure_dirs
-
-        ensure_dirs()
-
-        # Remove both files
-        for f in ["followees.json", "secrets.json"]:
-            file_path = temp_config_dir / f
-            if file_path.exists():
-                file_path.unlink()
-
-        # Create secrets.json to avoid the other error
+        # Create secrets.json with MISSING values (empty password to trigger error)
         secrets_data = {
-            "qq_email": "s@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "k",
-            "github_username": "u",
-            "github_pat": "p",
+            "qq_email": "test@qq.com",
+            "qq_smtp_app_password": "",  # Empty! Should trigger error
+            "glm_api_key": "test_glm_key",
+            "github_username": "test_user",
+            "github_pat": "test_pat",
         }
         (temp_config_dir / "secrets.json").write_text(
             json.dumps(secrets_data), encoding="utf-8"
         )
 
-        assert not FOLLOWEES_FILE.exists()
+        ensure_dirs()
 
-        cfg = Config()
+        with pytest.raises(RuntimeError, match="secrets.json missing value for qq_smtp_app_password"):
+            Config()
 
-        # Default followees.json should be created
-        assert FOLLOWEES_FILE.exists()
-        assert "minimax" in cfg.followees
+    def test_creates_default_followees_if_missing(self, temp_config_dir: Path) -> None:
+        """Config should create default followees.json if it doesn't exist."""
+        from unittest.mock import patch
+
+        # Patch all module-level paths
+        with patch("horizons.config.BASE_DIR", temp_config_dir), \
+             patch("horizons.config.CONFIG_DIR", temp_config_dir / "config"), \
+             patch("horizons.config.DATA_DIR", temp_config_dir / "data"), \
+             patch("horizons.config.LOG_DIR", temp_config_dir / "logs"), \
+             patch("horizons.config.SECRETS_FILE", temp_config_dir / "config" / "secrets.json"), \
+             patch("horizons.config.FOLLOWEES_FILE", temp_config_dir / "config" / "followees.json"):
+            
+            from horizons.config import Config, FOLLOWEES_FILE, ensure_dirs
+
+            # Force module reload after patching
+            import importlib
+            import horizons.config
+            importlib.reload(horizons.config)
+
+            ensure_dirs()
+
+            # Remove both files
+            for f in [FOLLOWEES_FILE, temp_config_dir / "config" / "secrets.json"]:
+                file_path = f if isinstance(f, Path) else temp_config_dir / f
+                if file_path.exists():
+                    file_path.unlink()
+
+            # Create secrets.json with valid data to avoid _load_secrets error
+            secrets_data = {
+                "qq_email": "s@q.com",
+                "qq_smtp_app_password": "p",
+                "glm_api_key": "k",
+                "github_username": "u",
+                "github_pat": "p",
+            }
+            (temp_config_dir / "secrets.json").write_text(
+                json.dumps(secrets_data), encoding="utf-8"
+            )
+
+            assert not FOLLOWEES_FILE.exists()
+
+            cfg = Config()
+
+            # Default followees.json should be created
+            assert FOLLOWEES_FILE.exists()
+            assert "minimax" in cfg.followees
+
+    def test_creates_default_followees_if_missing(self, temp_config_dir: Path) -> None:
+        """Config should create default followees.json if it doesn't exist."""
+        from unittest.mock import patch
+
+        # Patch all module-level paths
+        with patch("horizons.config.BASE_DIR", temp_config_dir), \
+             patch("horizons.config.CONFIG_DIR", temp_config_dir / "config"), \
+             patch("horizons.config.DATA_DIR", temp_config_dir / "data"), \
+             patch("horizons.config.LOG_DIR", temp_config_dir / "logs"), \
+             patch("horizons.config.SECRETS_FILE", temp_config_dir / "config" / "secrets.json"), \
+             patch("horizons.config.FOLLOWEES_FILE", temp_config_dir / "config" / "followees.json"):
+
+            # Force module reload after patching
+            import importlib
+            import horizons.config
+            importlib.reload(horizons.config)
+
+            from horizons.config import Config, FOLLOWEES_FILE
+
+            ensure_dirs()
+
+            # Remove both files to ensure clean state
+            for f in [FOLLOWEES_FILE, temp_config_dir / "config" / "secrets.json"]:
+                file_path = f if isinstance(f, Path) else temp_config_dir / f
+                if file_path.exists():
+                    file_path.unlink()
+
+            # Create secrets.json with valid data to avoid _load_secrets error
+            secrets_data = {
+                "qq_email": "s@q.com",
+                "qq_smtp_app_password": "p",
+                "glm_api_key": "k",
+                "github_username": "u",
+                "github_pat": "p",
+            }
+            (temp_config_dir / "secrets.json").write_text(
+                json.dumps(secrets_data), encoding="utf-8"
+            )
+
+            assert not FOLLOWEES_FILE.exists()
+
+            cfg = Config()
+
+            # Default followees.json should be created
+            assert FOLLOWEES_FILE.exists()
+            assert "minimax" in cfg.followees
 
 
 class TestEnsureDirs:
