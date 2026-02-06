@@ -6,7 +6,7 @@ from textwrap import dedent
 
 import typer
 
-from .config import get_config, ensure_dirs, DATA_DIR
+from .config import config, ensure_dirs, DATA_DIR
 from .db import DB_PATH, initialize, update_item
 from .collector.rss import RSSCollector
 from .collector.webpage import WebPageCollector

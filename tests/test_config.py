@@ -2,13 +2,115 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-# We need to patch the module-level constants before importing Config
-# to avoid side effects from the global config instance
+
+@pytest.fixture(autouse=True)
+def set_test_base_dir(tmp_path: Path):
+    """Auto-use fixture to set HORIZONS_BASE_DIR for all tests."""
+    # Set environment variable to override BASE_DIR in config.py
+    old_value = os.environ.get("HORIZONS_BASE_DIR")
+    os.environ["HORIZONS_BASE_DIR"] = str(tmp_path)
+    yield
+    # Restore
+    if old_value is None:
+        os.environ.pop("HORIZONS_BASE_DIR", None)
+    else:
+        os.environ["HORIZONS_BASE_DIR"] = old_value
+
+
+@pytest.fixture
+def temp_config_dir(tmp_path: Path) -> Path:
+    """Create a temporary config directory with test fixtures."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+
+    # Create test followees.json
+    followees = {
+        "test_followee": {
+            "display_name": "Test Followee",
+            "sources": [
+                {
+                    "name": "Test RSS",
+                    "url": "https://example.com/feed.xml",
+                    "kind": "rss",
+                }
+            ],
+        }
+    }
+    (config_dir / "followees.json").write_text(
+        json.dumps(followees, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # Create test secrets.json
+    secrets = {
+        "qq_email": "test@qq.com",
+        "qq_smtp_app_password": "test_password",
+        "glm_api_key": "test_glm_key",
+        "github_username": "test_user",
+        "github_pat": "test_pat",
+    }
+    (config_dir / "secrets.json").write_text(
+        json.dumps(secrets, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    return config_dir
+
+
+@pytest.fixture
+def temp_data_dir(tmp_path: Path) -> Path:
+    """Create a temporary data directory."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    return data_dir
+
+
+@pytest.fixture
+def sample_rss_content() -> str:
+    """Sample RSS feed content for testing."""
+    return """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <description>A test feed</description>
+    <item>
+      <title>Test Article 1</title>
+      <link>https://example.com/article1</link>
+      <pubDate>Mon, 01 Jan 2024 12:00:00 GMT</pubDate>
+      <description>This is first test article.</description>
+    </item>
+    <item>
+      <title>Test Article 2</title>
+      <link>https://example.com/article2</link>
+      <pubDate>Tue, 02 Jan 2024 12:00:00 GMT</pubDate>
+      <description>This is second test article.</description>
+    </item>
+  </channel>
+</rss>"""
+
+
+@pytest.fixture
+def sample_webpage_html() -> str:
+    """Sample webpage HTML content for testing."""
+    return """<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Interview</title>
+</head>
+<body>
+    <article>
+        <h1>Interview with Test Person</h1>
+        <p>This is first paragraph of interview content.</p>
+        <p>This is second paragraph with more details.</p>
+        <p>This is third paragraph concluding the interview.</p>
+    </article>
+</body>
+</html>"""
 
 
 class TestFollowSource:
@@ -52,7 +154,7 @@ class TestFollowee:
         """Followee should accept sources list."""
         from horizons.config import Followee, FollowSource
 
-        sources = [FollowSource(name="Feed", url="https://example.com")]
+        sources = [FollowSource(name="Feed", url="https://example.com", kind="rss")]
         followee = Followee(id="test", display_name="Test", sources=sources)
         assert len(followee.sources) == 1
         assert followee.sources[0].name == "Feed"
@@ -92,114 +194,68 @@ class TestSettings:
 class TestConfigLoading:
     """Tests for Config class file loading behavior."""
 
-    def test_load_followees_from_json(self, tmp_path: Path) -> None:
+    def test_load_followees_from_json(self, temp_config_dir: Path) -> None:
         """Config should load followees from JSON file."""
-        # Create temp config directory with followees.json
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+        from horizons.config import Config, ensure_dirs
 
-        followees_data = {
-            "test_followee": {
-                "display_name": "Test Followee",
-                "sources": [
-                    {"name": "Test RSS", "url": "https://example.com/feed", "kind": "rss"}
-                ],
-            }
-        }
-        (config_dir / "followees.json").write_text(
-            json.dumps(followees_data), encoding="utf-8"
-        )
+        ensure_dirs()
 
-        # Create secrets.json
-        secrets_data = {
-            "qq_email": "test@qq.com",
-            "qq_smtp_app_password": "pass",
-            "glm_api_key": "key",
-            "github_username": "user",
-            "github_pat": "pat",
-        }
-        (config_dir / "secrets.json").write_text(
-            json.dumps(secrets_data), encoding="utf-8"
-        )
+        cfg = Config()
+        assert "test_followee" in cfg.followees
+        assert cfg.followees["test_followee"].display_name == "Test Followee"
+        assert len(cfg.followees["test_followee"].sources) == 1
 
-        # Patch the module constants
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
-
-            from horizons.config import Config
-
-            cfg = Config()
-            assert "test_followee" in cfg.followees
-            assert cfg.followees["test_followee"].display_name == "Test Followee"
-            assert len(cfg.followees["test_followee"].sources) == 1
-
-    def test_missing_secrets_raises_error(self, tmp_path: Path) -> None:
+    def test_missing_secrets_raises_error(self, temp_config_dir: Path) -> None:
         """Config should raise RuntimeError when secrets.json is missing values."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+        from horizons.config import Config, ensure_dirs
 
-        # Create followees.json
-        (config_dir / "followees.json").write_text("{}", encoding="utf-8")
-
-        # Create secrets.json with empty values
-        secrets_data = {
-            "qq_email": "test@qq.com",
-            "qq_smtp_app_password": "",  # Empty!
-            "glm_api_key": "key",
-            "github_username": "user",
-            "github_pat": "pat",
-        }
-        (config_dir / "secrets.json").write_text(
-            json.dumps(secrets_data), encoding="utf-8"
+        # Create followees.json only (no secrets.json)
+        followees = {"test": {"display_name": "Test", "sources": []}}
+        (temp_config_dir / "followees.json").write_text(
+            json.dumps(followees), encoding="utf-8"
         )
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
+        # Remove secrets.json to test missing file case
+        secrets_file = temp_config_dir / "secrets.json"
+        if secrets_file.exists():
+            secrets_file.unlink()
 
-            from horizons.config import Config
+        ensure_dirs()
 
-            with pytest.raises(RuntimeError, match="missing value for qq_smtp_app_password"):
-                Config()
+        with pytest.raises(RuntimeError, match="secrets.json missing value for"):
+            Config()
 
-    def test_creates_default_followees_if_missing(self, tmp_path: Path) -> None:
+    def test_creates_default_followees_if_missing(self, temp_config_dir: Path) -> None:
         """Config should create default followees.json if it doesn't exist."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+        from horizons.config import Config, FOLLOWEES_FILE, ensure_dirs
 
-        # Create secrets.json only
+        ensure_dirs()
+
+        # Remove both files
+        for f in ["followees.json", "secrets.json"]:
+            file_path = temp_config_dir / f
+            if file_path.exists():
+                file_path.unlink()
+
+        # Create secrets.json to avoid the other error
         secrets_data = {
-            "qq_email": "test@qq.com",
-            "qq_smtp_app_password": "pass",
-            "glm_api_key": "key",
-            "github_username": "user",
-            "github_pat": "pat",
+            "qq_email": "s@q.com",
+            "qq_smtp_app_password": "p",
+            "glm_api_key": "k",
+            "github_username": "u",
+            "github_pat": "p",
         }
-        (config_dir / "secrets.json").write_text(
+        (temp_config_dir / "secrets.json").write_text(
             json.dumps(secrets_data), encoding="utf-8"
         )
 
-        followees_file = config_dir / "followees.json"
+        assert not FOLLOWEES_FILE.exists()
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", followees_file), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
+        cfg = Config()
 
-            from horizons.config import Config
-
-            cfg = Config()
-
-            # Default followees.json should be created
-            assert followees_file.exists()
-            # Should contain default minimax followee
-            assert "minimax" in cfg.followees
+        # Default followees.json should be created
+        assert FOLLOWEES_FILE.exists()
+        assert "minimax" in cfg.followees
 
 
 class TestEnsureDirs:
@@ -207,6 +263,8 @@ class TestEnsureDirs:
 
     def test_creates_directories(self, tmp_path: Path) -> None:
         """ensure_dirs should create config, data, and logs directories."""
+        from horizons.config import ensure_dirs
+
         config_dir = tmp_path / "config"
         data_dir = tmp_path / "data"
         log_dir = tmp_path / "logs"
@@ -214,8 +272,6 @@ class TestEnsureDirs:
         with patch("horizons.config.CONFIG_DIR", config_dir), \
              patch("horizons.config.DATA_DIR", data_dir), \
              patch("horizons.config.LOG_DIR", log_dir):
-
-            from horizons.config import ensure_dirs
 
             ensure_dirs()
 
