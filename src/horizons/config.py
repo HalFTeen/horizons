@@ -116,6 +116,8 @@ class Config:
 
     @property
     def secrets(self) -> Secrets:
+        if self._secrets is None:
+            self._secrets = self._load_secrets()
         return self._secrets
 
 
@@ -123,8 +125,8 @@ class Config:
 __all__ = ["BASE_DIR", "CONFIG_DIR", "DATA_DIR", "LOG_DIR", "SECRETS_FILE", "FOLLOWEES_FILE", "Config", "FollowSource", "Followee", "Secrets", "Settings", "ensure_dirs", "get_config"]
 
 
-# Lazy initialization - only create when needed
-config: Config | None = None
+# Initialize global config instance (secrets are lazy-loaded)
+config = Config()
 
 def get_config() -> Config:
     """Get or create the global config instance."""
