@@ -6,11 +6,12 @@ from textwrap import dedent
 
 import typer
 
-from .config import config, ensure_dirs
-from .db import DB_PATH, initialize
+from .config import config, ensure_dirs, DATA_DIR
+from .db import DB_PATH, initialize, update_item
 from .collector.rss import RSSCollector
 from .collector.webpage import WebPageCollector
 from .mailer.qq import QQMailer
+from .summarizer.glm import GLMSummarizer
 
 app = typer.Typer(help="Horizons command line interface")
 
@@ -107,6 +108,70 @@ def email_snippet(
     mailer = QQMailer()
     mailer.send_markdown(subject=subject, markdown_content=markdown_body, recipients=[recipient])
     typer.echo(f"Snippet email sent to {recipient}")
+
+
+@app.command()
+def summarize(
+    item_id: int = typer.Argument(..., help="ID of the item to summarize"),
+) -> None:
+    """Summarize a stored item using GLM API and save the result."""
+    ensure_dirs()
+    initialize()
+
+    import sqlite3
+    from datetime import datetime
+
+    # Fetch the item from database
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT id, title, url, content FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        typer.echo(f"Error: Item with ID {item_id} not found")
+        raise typer.Exit(code=1)
+
+    title = row["title"]
+    url = row["url"]
+    content = row["content"] or ""
+
+    if not content.strip():
+        typer.echo(f"Error: Item {item_id} has no content to summarize")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Summarizing: {title}")
+
+    # Call GLM API
+    summarizer = GLMSummarizer()
+    try:
+        summary = summarizer.summarize(title=title, url=url, content=content)
+    except Exception as exc:
+        typer.echo(f"Error calling GLM API: {exc}")
+        raise typer.Exit(code=1)
+
+    # Save summary to file
+    summaries_dir = DATA_DIR / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_title = "".join(c if c.isalnum() or c in "._- " else "_" for c in title[:50])
+    summary_filename = f"{timestamp}_{safe_title}.md"
+    summary_path = summaries_dir / summary_filename
+
+    summary_path.write_text(summary, encoding="utf-8")
+
+    # Update item in database
+    update_item(item_id, status="summarized", summary_path=str(summary_path))
+
+    typer.echo(f"Summary saved to: {summary_path}")
+    typer.echo("---")
+    # Show first few lines as preview
+    preview_lines = summary.split("\n")[:10]
+    typer.echo("\n".join(preview_lines))
+    if len(summary.split("\n")) > 10:
+        typer.echo("...")
 
 
 if __name__ == "__main__":
