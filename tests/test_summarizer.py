@@ -39,202 +39,77 @@ class TestBuildPrompt:
 class TestGLMSummarizer:
     """Tests for GLMSummarizer class."""
 
-    def test_init_loads_api_key_from_config(self, tmp_path: Path) -> None:
+    def test_init_loads_api_key_from_config(self) -> None:
         """GLMSummarizer should load API key from config."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+        from horizons.summarizer.glm import GLMSummarizer
 
-        secrets_data = {
-            "qq_email": "s@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "test_glm_api_key_123",
-            "github_username": "u",
-            "github_pat": "p",
-        }
-        (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
-        (config_dir / "followees.json").write_text("{}", encoding="utf-8")
+        summarizer = GLMSummarizer()
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
+        assert summarizer.api_key == "test_glm_key"
+        assert summarizer.model == "glm-4-plus"
 
-            import importlib
-            import horizons.config
-            importlib.reload(horizons.config)
-
-            from horizons.summarizer.glm import GLMSummarizer
-
-            summarizer = GLMSummarizer()
-
-            assert summarizer.api_key == "test_glm_api_key_123"
-            assert summarizer.model == "glm-4-plus"
-
-    def test_init_accepts_custom_model(self, tmp_path: Path) -> None:
+    def test_init_accepts_custom_model(self) -> None:
         """GLMSummarizer should accept custom model name."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+        from horizons.summarizer.glm import GLMSummarizer
 
-        secrets_data = {
-            "qq_email": "s@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "key",
-            "github_username": "u",
-            "github_pat": "p",
-        }
-        (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
-        (config_dir / "followees.json").write_text("{}", encoding="utf-8")
+        summarizer = GLMSummarizer(model="glm-4-flash")
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
+        assert summarizer.model == "glm-4-flash"
 
-            import importlib
-            import horizons.config
-            importlib.reload(horizons.config)
+    def test_summarize_calls_api_correctly(self) -> None:
+        """summarize() should call GLM API with correct parameters."""
+        from horizons.summarizer.glm import GLMSummarizer
 
-            from horizons.summarizer.glm import GLMSummarizer
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"choices": [{"message": {"content": "Test summary"}}]}
 
-            summarizer = GLMSummarizer(model="glm-4-flash")
-
-            assert summarizer.model == "glm-4-flash"
-
-    def test_summarize_calls_api_correctly(self, tmp_path: Path) -> None:
-        """summarize() should call GLM API with correct payload."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        secrets_data = {
-            "qq_email": "s@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "test_api_key",
-            "github_username": "u",
-            "github_pat": "p",
-        }
-        (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
-        (config_dir / "followees.json").write_text("{}", encoding="utf-8")
-
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
-
-            import importlib
-            import horizons.config
-            importlib.reload(horizons.config)
-
-            from horizons.summarizer.glm import GLMSummarizer
-
+        with patch("requests.post", return_value=mock_response) as mock_post:
             summarizer = GLMSummarizer()
+            result = summarizer.summarize(
+                title="Test Title",
+                url="https://example.com/article",
+                content="This is test content.",
+            )
 
-            # Mock the API response
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                "choices": [
-                    {
-                        "message": {
-                            "content": "# Summary\n\nThis is the summary."
-                        }
-                    }
-                ]
-            }
-            mock_response.raise_for_status = MagicMock()
-
-            with patch("requests.post", return_value=mock_response) as mock_post:
-                result = summarizer.summarize(
-                    title="Test Interview",
-                    url="https://example.com",
-                    content="Interview content here.",
-                )
-
-            # Verify API was called correctly
+            assert result == "Test summary"
             mock_post.assert_called_once()
-            call_kwargs = mock_post.call_args[1]
-
-            assert call_kwargs["headers"]["Authorization"] == "Bearer test_api_key"
+            # requests.post(url, headers=..., json=...) uses positional arguments
+            call_args = mock_post.call_args.args
+            assert call_args[0] == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+            call_kwargs = mock_post.call_args.kwargs
+            assert "Authorization" in call_kwargs["headers"]
+            assert call_kwargs["headers"]["Authorization"] == "Bearer test_glm_key"
+            assert "model" in call_kwargs["json"]
             assert call_kwargs["json"]["model"] == "glm-4-plus"
             assert len(call_kwargs["json"]["messages"]) == 2  # system + user
 
-            # Verify result
-            assert result == "# Summary\n\nThis is the summary."
-
-    def test_summarize_raises_on_invalid_response(self, tmp_path: Path) -> None:
+    def test_summarize_raises_on_invalid_response(self) -> None:
         """summarize() should raise RuntimeError on unexpected API response."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+        from horizons.summarizer.glm import GLMSummarizer
 
-        secrets_data = {
-            "qq_email": "s@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "key",
-            "github_username": "u",
-            "github_pat": "p",
-        }
-        (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
-        (config_dir / "followees.json").write_text("{}", encoding="utf-8")
+        summarizer = GLMSummarizer()
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
+        # Mock invalid API response
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"error": "Invalid request"}
+        mock_response.raise_for_status = MagicMock()
 
-            import importlib
-            import horizons.config
-            importlib.reload(horizons.config)
+        with patch("requests.post", return_value=mock_response):
+            with pytest.raises(RuntimeError, match="Failed to parse GLM response"):
+                summarizer.summarize("Title", "URL", "Content")
 
-            from horizons.summarizer.glm import GLMSummarizer
-
-            summarizer = GLMSummarizer()
-
-            # Mock invalid API response
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"error": "Invalid request"}
-            mock_response.raise_for_status = MagicMock()
-
-            with patch("requests.post", return_value=mock_response):
-                with pytest.raises(RuntimeError, match="Failed to parse GLM response"):
-                    summarizer.summarize("Title", "URL", "Content")
-
-    def test_summarize_handles_http_error(self, tmp_path: Path) -> None:
+    def test_summarize_handles_http_error(self) -> None:
         """summarize() should propagate HTTP errors."""
         import requests
+        from horizons.summarizer.glm import GLMSummarizer
 
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+        summarizer = GLMSummarizer()
 
-        secrets_data = {
-            "qq_email": "s@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "key",
-            "github_username": "u",
-            "github_pat": "p",
-        }
-        (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
-        (config_dir / "followees.json").write_text("{}", encoding="utf-8")
+        # Mock HTTP error
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = requests.HTTPError("401 Unauthorized")
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", tmp_path / "data"), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"):
-
-            import importlib
-            import horizons.config
-            importlib.reload(horizons.config)
-
-            from horizons.summarizer.glm import GLMSummarizer
-
-            summarizer = GLMSummarizer()
-
-            # Mock HTTP error
-            mock_response = MagicMock()
-            mock_response.raise_for_status.side_effect = requests.HTTPError("401 Unauthorized")
-
-            with patch("requests.post", return_value=mock_response):
-                with pytest.raises(requests.HTTPError):
-                    summarizer.summarize("Title", "URL", "Content")
+        with patch("requests.post", return_value=mock_response):
+            with pytest.raises(requests.HTTPError):
+                summarizer.summarize("Title", "URL", "Content")

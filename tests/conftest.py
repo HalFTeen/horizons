@@ -9,12 +9,18 @@ from typing import Generator
 
 import pytest
 
+# Create a shared test base directory before any imports
+# This ensures HORIZONS_BASE_DIR is set before horizons modules are imported
+_TEST_BASE_DIR = Path(tempfile.gettempdir()) / "horizons_test_shared"
+_TEST_BASE_DIR.mkdir(exist_ok=True, parents=True)
+os.environ["HORIZONS_BASE_DIR"] = str(_TEST_BASE_DIR)
+
 
 @pytest.fixture
-def temp_config_dir(tmp_path: Path) -> Generator[Path, None, None]:
+def temp_config_dir() -> Generator[Path, None, None]:
     """Create a temporary config directory with test fixtures."""
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
+    config_dir = _TEST_BASE_DIR / "config"
+    config_dir.mkdir(exist_ok=True)
 
     # Create test followees.json
     followees = {
