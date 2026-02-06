@@ -60,7 +60,8 @@ class Config:
     def __init__(self) -> None:
         ensure_dirs()
         self._followees = self._load_followees()
-        self._secrets = self._load_secrets()
+        # Lazy load secrets to avoid side effects in tests
+        self._secrets: Optional[Secrets] = None
         self.settings = Settings()
 
     @staticmethod

@@ -9,20 +9,6 @@ from unittest.mock import patch
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def set_test_base_dir(tmp_path: Path):
-    """Auto-use fixture to set HORIZONS_BASE_DIR for all tests."""
-    # Set environment variable to override BASE_DIR in config.py
-    old_value = os.environ.get("HORIZONS_BASE_DIR")
-    os.environ["HORIZONS_BASE_DIR"] = str(tmp_path)
-    yield
-    # Restore
-    if old_value is None:
-        os.environ.pop("HORIZONS_BASE_DIR", None)
-    else:
-        os.environ["HORIZONS_BASE_DIR"] = old_value
-
-
 @pytest.fixture
 def temp_config_dir(tmp_path: Path) -> Path:
     """Create a temporary config directory with test fixtures."""
@@ -196,14 +182,22 @@ class TestConfigLoading:
 
     def test_load_followees_from_json(self, temp_config_dir: Path) -> None:
         """Config should load followees from JSON file."""
-        from horizons.config import Config, ensure_dirs
+        from unittest.mock import patch
 
-        ensure_dirs()
+        # Patch all module-level paths
+        with patch("horizons.config.BASE_DIR", temp_config_dir), \
+             patch("horizons.config.CONFIG_DIR", temp_config_dir / "config"), \
+             patch("horizons.config.DATA_DIR", temp_config_dir / "data"), \
+             patch("horizons.config.LOG_DIR", temp_config_dir / "logs"), \
+             patch("horizons.config.SECRETS_FILE", temp_config_dir / "config" / "secrets.json"), \
+             patch("horizons.config.FOLLOWEES_FILE", temp_config_dir / "config" / "followees.json"):
 
-        cfg = Config()
-        assert "test_followee" in cfg.followees
-        assert cfg.followees["test_followee"].display_name == "Test Followee"
-        assert len(cfg.followees["test_followee"].sources) == 1
+            from horizons.config import Config
+
+            cfg = Config()
+            assert "test_followee" in cfg.followees
+            assert cfg.followees["test_followee"].display_name == "Test Followee"
+            assert len(cfg.followees["test_followee"].sources) == 1
 
     def test_missing_secrets_raises_error(self, temp_config_dir: Path) -> None:
         """Config should raise RuntimeError when secrets.json is missing values."""

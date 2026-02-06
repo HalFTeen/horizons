@@ -8,7 +8,9 @@ from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+# Base paths - can be overridden via environment variable for testing
+import os as _os
+BASE_DIR = Path(_os.environ.get("HORIZONS_BASE_DIR", Path(__file__).resolve().parent.parent.parent))
 CONFIG_DIR = BASE_DIR / "config"
 DATA_DIR = BASE_DIR / "data"
 LOG_DIR = BASE_DIR / "logs"
@@ -58,7 +60,8 @@ class Config:
     def __init__(self) -> None:
         ensure_dirs()
         self._followees = self._load_followees()
-        self._secrets = self._load_secrets()
+        # Lazy load secrets to avoid side effects in tests
+        self._secrets: Optional[Secrets] = None
         self.settings = Settings()
 
     @staticmethod
@@ -116,4 +119,16 @@ class Config:
         return self._secrets
 
 
-config = Config()
+# Export for testing
+__all__ = ["BASE_DIR", "CONFIG_DIR", "DATA_DIR", "LOG_DIR", "SECRETS_FILE", "FOLLOWEES_FILE", "Config", "FollowSource", "Followee", "Secrets", "Settings", "ensure_dirs", "get_config"]
+
+
+# Lazy initialization - only create when needed
+config: Config | None = None
+
+def get_config() -> Config:
+    """Get or create the global config instance."""
+    global config
+    if config is None:
+        config = Config()
+    return config
