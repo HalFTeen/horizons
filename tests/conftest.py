@@ -15,43 +15,44 @@ _TEST_BASE_DIR = Path(tempfile.gettempdir()) / "horizons_test_shared"
 _TEST_BASE_DIR.mkdir(exist_ok=True, parents=True)
 os.environ["HORIZONS_BASE_DIR"] = str(_TEST_BASE_DIR)
 
+# Create test configuration files upfront
+# This ensures they exist before any module imports happen
+config_dir = _TEST_BASE_DIR / "config"
+config_dir.mkdir(exist_ok=True)
+
+# Create test followees.json
+followees = {
+    "test_followee": {
+        "display_name": "Test Followee",
+        "sources": [
+            {
+                "name": "Test RSS",
+                "url": "https://example.com/feed.xml",
+                "kind": "rss",
+            }
+        ],
+    }
+}
+(config_dir / "followees.json").write_text(
+    json.dumps(followees, indent=2), encoding="utf-8"
+)
+
+# Create test secrets.json
+secrets = {
+    "qq_email": "test@qq.com",
+    "qq_smtp_app_password": "test_password",
+    "glm_api_key": "test_glm_key",
+    "github_username": "test_user",
+    "github_pat": "test_pat",
+}
+(config_dir / "secrets.json").write_text(
+    json.dumps(secrets, indent=2), encoding="utf-8"
+)
 
 @pytest.fixture
 def temp_config_dir() -> Generator[Path, None, None]:
-    """Create a temporary config directory with test fixtures."""
-    config_dir = _TEST_BASE_DIR / "config"
-    config_dir.mkdir(exist_ok=True)
-
-    # Create test followees.json
-    followees = {
-        "test_followee": {
-            "display_name": "Test Followee",
-            "sources": [
-                {
-                    "name": "Test RSS",
-                    "url": "https://example.com/feed.xml",
-                    "kind": "rss",
-                }
-            ],
-        }
-    }
-    (config_dir / "followees.json").write_text(
-        json.dumps(followees, indent=2), encoding="utf-8"
-    )
-
-    # Create test secrets.json
-    secrets = {
-        "qq_email": "test@qq.com",
-        "qq_smtp_app_password": "test_password",
-        "glm_api_key": "test_glm_key",
-        "github_username": "test_user",
-        "github_pat": "test_pat",
-    }
-    (config_dir / "secrets.json").write_text(
-        json.dumps(secrets, indent=2), encoding="utf-8"
-    )
-
-    yield config_dir
+    """Return the shared test config directory."""
+    yield _TEST_BASE_DIR / "config"
 
 
 @pytest.fixture

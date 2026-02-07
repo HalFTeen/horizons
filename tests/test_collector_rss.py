@@ -1,42 +1,11 @@
 """Unit tests for horizons.collector.rss module."""
 from __future__ import annotations
 
-import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-
-@pytest.fixture
-def mock_config(tmp_path: Path):
-    """Create a mock config with test followees."""
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-
-    followees_data = {
-        "test_followee": {
-            "display_name": "Test Followee",
-            "sources": [
-                {"name": "Test RSS", "url": "https://example.com/feed.xml", "kind": "rss"},
-                {"name": "Test Webpage", "url": "https://example.com/page", "kind": "webpage"},
-            ],
-        }
-    }
-    (config_dir / "followees.json").write_text(json.dumps(followees_data), encoding="utf-8")
-
-    secrets_data = {
-        "qq_email": "test@qq.com",
-        "qq_smtp_app_password": "pass",
-        "glm_api_key": "key",
-        "github_username": "user",
-        "github_pat": "pat",
-    }
-    (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
-
-    return config_dir, data_dir
 
 
 class TestRSSRecord:
@@ -63,9 +32,9 @@ class TestRSSCollector:
     """Tests for RSSCollector class."""
 
     @pytest.mark.skip(reason="Module-level constant patching doesn't work - DB_PATH computed before patch applied")
-    def test_sync_followees_inserts_rss_sources_only(self, mock_config, tmp_path: Path) -> None:
+    def test_sync_followees_inserts_rss_sources_only(self, tmp_path: Path) -> None:
         """sync_followees() should only insert sources with kind='rss'."""
-        config_dir, data_dir = mock_config
+        config_dir, data_dir = tmp_path / "config", tmp_path / "data"
         db_path = data_dir / "horizons.db"
 
         with patch("horizons.config.CONFIG_DIR", config_dir), \
@@ -76,7 +45,6 @@ class TestRSSCollector:
              patch("horizons.db.DATA_DIR", data_dir), \
              patch("horizons.db.DB_PATH", db_path):
 
-            # Reload modules to pick up patched paths
             import importlib
             import horizons.config
             import horizons.db
@@ -101,7 +69,6 @@ class TestRSSCollector:
             assert all(k == "rss" for k in kinds)
             assert len(kinds) == 1
 
-    @pytest.mark.skip(reason="Module-level constant patching doesn't work")
     def test_fetch_parses_rss_entries(self, sample_rss_content: str) -> None:
         """fetch() should parse RSS feed and return RSSRecord objects."""
         from horizons.collector.rss import RSSCollector, RSSRecord
@@ -150,7 +117,6 @@ class TestRSSCollector:
 
         collector = RSSCollector(session=mock_session)
         collector.followees = {"test": followee}
-
         records = collector.fetch(followee)
 
         assert records == []
@@ -173,7 +139,6 @@ class TestRSSCollector:
 
         collector = RSSCollector(session=mock_session)
         collector.followees = {"test": followee}
-
         records = collector.fetch(followee)
 
         # Should not make any HTTP requests for non-RSS sources
@@ -184,11 +149,23 @@ class TestRSSCollector:
 class TestRSSCollectorIngest:
     """Tests for RSSCollector.ingest() integration."""
 
-    def test_ingest_stores_new_items(self, mock_config, tmp_path: Path, sample_rss_content: str) -> None:
+    def test_ingest_stores_new_items(self, sample_rss_content: str) -> None:
         """ingest() should fetch RSS and store new items in database."""
-        config_dir, data_dir = mock_config
-        db_path = data_dir / "horizons.db"
+        from horizons.db import initialize
+        from horizons.collector.rss import RSSCollector
+        from horizons.config import Followee, FollowSource
 
+        # Get shared test paths
+        import os as _os
+        from pathlib import Path as _Path
+        test_base = _Path(_os.environ.get("HORIZONS_BASE_DIR", _Path(__file__).resolve().parent.parent))
+        db_path = test_base / "data" / "horizons.db"
+
+        # Clean database before test
+        if db_path.exists():
+            db_path.unlink()
+
+        # Mock RSS response
         mock_response = MagicMock()
         mock_response.content = sample_rss_content.encode("utf-8")
         mock_response.raise_for_status = MagicMock()
@@ -196,35 +173,39 @@ class TestRSSCollectorIngest:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_response
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", data_dir), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"), \
-             patch("horizons.db.DATA_DIR", data_dir), \
-             patch("horizons.db.DB_PATH", db_path):
+        # Create test followee
+        followee = Followee(
+            id="test_followee",
+            display_name="Test",
+            sources=[FollowSource(name="Test Feed", url="https://example.com/feed", kind="rss")],
+        )
 
-            import importlib
-            import horizons.config
-            import horizons.db
-            importlib.reload(horizons.config)
-            importlib.reload(horizons.db)
+        # Initialize database
+        initialize()
 
-            from horizons.db import initialize
-            from horizons.collector.rss import RSSCollector
+        collector = RSSCollector(session=mock_session)
+        collector.followees = {"test_followee": followee}
+        inserted = collector.ingest()
 
-            initialize()
+        assert inserted == 2
 
-            collector = RSSCollector(session=mock_session)
-            inserted = collector.ingest()
-
-            assert inserted == 2
-
-    def test_ingest_skips_duplicate_items(self, mock_config, tmp_path: Path, sample_rss_content: str) -> None:
+    def test_ingest_skips_duplicate_items(self, sample_rss_content: str) -> None:
         """ingest() should not insert duplicate items."""
-        config_dir, data_dir = mock_config
-        db_path = data_dir / "horizons.db"
+        from horizons.db import initialize
+        from horizons.collector.rss import RSSCollector
+        from horizons.config import Followee, FollowSource
 
+        # Get shared test paths
+        import os as _os
+        from pathlib import Path as _Path
+        test_base = _Path(_os.environ.get("HORIZONS_BASE_DIR", _Path(__file__).resolve().parent.parent))
+        db_path = test_base / "data" / "horizons.db"
+
+        # Clean database before test
+        if db_path.exists():
+            db_path.unlink()
+
+        # Mock RSS response
         mock_response = MagicMock()
         mock_response.content = sample_rss_content.encode("utf-8")
         mock_response.raise_for_status = MagicMock()
@@ -232,28 +213,20 @@ class TestRSSCollectorIngest:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_response
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", data_dir), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"), \
-             patch("horizons.db.DATA_DIR", data_dir), \
-             patch("horizons.db.DB_PATH", db_path):
+        # Create test followee
+        followee = Followee(
+            id="test_followee",
+            display_name="Test",
+            sources=[FollowSource(name="Test Feed", url="https://example.com/feed", kind="rss")],
+        )
 
-            import importlib
-            import horizons.config
-            import horizons.db
-            importlib.reload(horizons.config)
-            importlib.reload(horizons.db)
+        # Initialize database
+        initialize()
 
-            from horizons.db import initialize
-            from horizons.collector.rss import RSSCollector
+        collector = RSSCollector(session=mock_session)
+        collector.followees = {"test_followee": followee}
+        first_inserted = collector.ingest()
+        second_inserted = collector.ingest()
 
-            initialize()
-
-            collector = RSSCollector(session=mock_session)
-            first_inserted = collector.ingest()
-            second_inserted = collector.ingest()
-
-            assert first_inserted == 2
-            assert second_inserted == 0  # All duplicates
+        assert first_inserted == 2
+        assert second_inserted == 0  # All duplicates

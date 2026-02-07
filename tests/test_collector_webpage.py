@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -100,141 +101,97 @@ class TestWebPageCollector:
         mock_session = MagicMock()
         mock_session.get.return_value = mock_response
 
-        # trafilatura returns content but no title
+        # Mock trafilatura.extract to return text but no title
         trafilatura_result = json.dumps({
-            "title": None,  # No title
-            "text": "Some content here.",
+            "text": "Content without title...",
         })
 
         with patch("horizons.collector.webpage.trafilatura.extract", return_value=trafilatura_result):
             collector = WebPageCollector(session=mock_session)
-            record = collector.fetch_single("test", "https://example.com", "https://example.com/page")
+            record = collector.fetch_single(
+                followee_id="test",
+                source_url="https://example.com",
+                url="https://example.com/interview",
+            )
 
         assert record is not None
-        assert record.title == "Test Interview"  # From HTML <title>
+        assert record.title == "Test Interview"  # From HTML
 
 
 class TestWebPageCollectorStoreRecord:
-    """Tests for WebPageCollector.store_record() method."""
+    """Tests for WebPageCollector.store_record() integration."""
 
-    def test_store_record_inserts_item(self, tmp_path: Path) -> None:
+    def test_store_record_inserts_item(self) -> None:
         """store_record() should insert record into database."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        db_path = data_dir / "horizons.db"
+        from horizons.db import initialize, upsert_sources
+        from horizons.collector.webpage import WebPageCollector, WebPageRecord
 
-        # Create config files
-        followees_data = {
-            "test": {
-                "display_name": "Test",
-                "sources": [{"name": "Manual", "url": "manual", "kind": "webpage"}],
-            }
-        }
-        (config_dir / "followees.json").write_text(json.dumps(followees_data), encoding="utf-8")
+        # Get shared test paths
+        import os as _os
+        from pathlib import Path as _Path
+        test_base = _Path(_os.environ.get("HORIZONS_BASE_DIR", _Path(__file__).resolve().parent.parent))
+        db_path = test_base / "data" / "horizons.db"
 
-        secrets_data = {
-            "qq_email": "t@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "k",
-            "github_username": "u",
-            "github_pat": "p",
-        }
-        (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
+        # Clean database before test
+        if db_path.exists():
+            db_path.unlink()
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", data_dir), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"), \
-             patch("horizons.db.DATA_DIR", data_dir), \
-             patch("horizons.db.DB_PATH", db_path):
+        # Initialize database
+        initialize()
 
-            import importlib
-            import horizons.config
-            import horizons.db
-            importlib.reload(horizons.config)
-            importlib.reload(horizons.db)
+        # Insert source
+        upsert_sources("test", [{"name": "Manual", "url": "manual", "kind": "webpage"}])
 
-            from horizons.db import initialize, upsert_sources
-            from horizons.collector.webpage import WebPageCollector, WebPageRecord
+        collector = WebPageCollector()
+        record = WebPageRecord(
+            followee_id="test",
+            source_url="manual",
+            url="https://example.com/article",
+            title="Test Article",
+            content="Test content here.",
+        )
 
-            initialize()
-            upsert_sources("test", [{"name": "Manual", "url": "manual", "kind": "webpage"}])
+        result = collector.store_record(record)
 
-            collector = WebPageCollector()
-            record = WebPageRecord(
-                followee_id="test",
-                source_url="manual",
-                url="https://example.com/article",
-                title="Test Article",
-                content="Test content here.",
-            )
+        assert result is True
 
-            result = collector.store_record(record)
+        # Verify in database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT title, content FROM items WHERE followee_id = 'test'")
+        row = cursor.fetchone()
+        conn.close()
 
-            assert result is True
+        assert row is not None
+        assert row[0] == "Test Article"
+        assert row[1] == "Test content here."
 
-            # Verify in database
-            import sqlite3
-            conn = sqlite3.connect(db_path)
-            cursor = conn.execute("SELECT title, content FROM items WHERE followee_id = 'test'")
-            row = cursor.fetchone()
-            conn.close()
-
-            assert row is not None
-            assert row[0] == "Test Article"
-            assert row[1] == "Test content here."
-
-    def test_store_record_returns_false_for_missing_source(self, tmp_path: Path) -> None:
+    def test_store_record_returns_false_for_missing_source(self) -> None:
         """store_record() should return False when source doesn't exist."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        db_path = data_dir / "horizons.db"
+        from horizons.db import initialize
+        from horizons.collector.webpage import WebPageCollector, WebPageRecord
 
-        followees_data = {"test": {"display_name": "Test", "sources": []}}
-        (config_dir / "followees.json").write_text(json.dumps(followees_data), encoding="utf-8")
+        # Get shared test paths
+        import os as _os
+        from pathlib import Path as _Path
+        test_base = _Path(_os.environ.get("HORIZONS_BASE_DIR", _Path(__file__).resolve().parent.parent))
+        db_path = test_base / "data" / "horizons.db"
 
-        secrets_data = {
-            "qq_email": "t@q.com",
-            "qq_smtp_app_password": "p",
-            "glm_api_key": "k",
-            "github_username": "u",
-            "github_pat": "p",
-        }
-        (config_dir / "secrets.json").write_text(json.dumps(secrets_data), encoding="utf-8")
+        # Clean database before test
+        if db_path.exists():
+            db_path.unlink()
 
-        with patch("horizons.config.CONFIG_DIR", config_dir), \
-             patch("horizons.config.DATA_DIR", data_dir), \
-             patch("horizons.config.LOG_DIR", tmp_path / "logs"), \
-             patch("horizons.config.FOLLOWEES_FILE", config_dir / "followees.json"), \
-             patch("horizons.config.SECRETS_FILE", config_dir / "secrets.json"), \
-             patch("horizons.db.DATA_DIR", data_dir), \
-             patch("horizons.db.DB_PATH", db_path):
+        # Initialize database (without the source)
+        initialize()
 
-            import importlib
-            import horizons.config
-            import horizons.db
-            importlib.reload(horizons.config)
-            importlib.reload(horizons.db)
+        collector = WebPageCollector()
+        record = WebPageRecord(
+            followee_id="test",
+            source_url="nonexistent",
+            url="https://example.com/article",
+            title="Test Article",
+            content="Test content here.",
+        )
 
-            from horizons.db import initialize
-            from horizons.collector.webpage import WebPageCollector, WebPageRecord
+        result = collector.store_record(record)
 
-            initialize()
-
-            collector = WebPageCollector()
-            record = WebPageRecord(
-                followee_id="test",
-                source_url="nonexistent",
-                url="https://example.com/article",
-                title="Test",
-                content="Content",
-            )
-
-            result = collector.store_record(record)
-
-            assert result is False
+        assert result is False
